@@ -19,7 +19,7 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
-        token: ${{ secrets.GITHUB_TOKEN }}
+        token: ${{ secrets.GITHUB_TOKEN_WRITE }}
     
     - name: Generate system status
       run: |
@@ -55,6 +55,7 @@ jobs:
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN_WRITE }}
     
     - name: Generate repository statistics
       run: |
@@ -90,6 +91,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN_WRITE }}
     
     - name: Update documentation timestamp
       run: |
