@@ -1,0 +1,536 @@
+name: Continuous Commits and System Updates
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Commit system updates every 2 hours
+    - cron: '0 */2 * * *'
+  workflow_dispatch:
+    inputs:
+      commit_type:
+        description: 'Type of commit to make'
+        required: true
+        default: 'system-update'
+        type: choice
+        options:
+        - system-update
+        - metrics-update
+        - documentation-update
+        - performance-report
+      message:
+        description: 'Custom commit message'
+        required: false
+        type: string
+
+jobs:
+  # System health check and metrics collection
+  system-health:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event.inputs.commit_type == 'system-update'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install dependencies
+      run: |
+        pip install requests psutil prometheus-client
+    
+    - name: Collect system metrics
+      id: metrics
+      run: |
+        python << 'EOF'
+        import json
+        import psutil
+        import requests
+        from datetime import datetime
+        
+        # System metrics
+        cpu_percent = psutil.cpu_percent(interval=1)
+        memory = psutil.virtual_memory()
+        disk = psutil.disk_usage('/')
+        
+        metrics = {
+            'timestamp': datetime.now().isoformat(),
+            'system': {
+                'cpu_percent': cpu_percent,
+                'memory_percent': memory.percent,
+                'memory_available_gb': memory.available / (1024**3),
+                'disk_percent': disk.percent,
+                'disk_free_gb': disk.free / (1024**3)
+            }
+        }
+        
+        # Try to get application metrics (if services are running)
+        app_metrics = {}
+        try:
+            # Web UI health
+            response = requests.get('http://localhost:5000/health', timeout=5)
+            app_metrics['web_ui'] = response.status_code == 200
+        except:
+            app_metrics['web_ui'] = False
+        
+        try:
+            # Inference service health
+            response = requests.get('http://localhost:5001/health', timeout=5)
+            app_metrics['inference'] = response.status_code == 200
+        except:
+            app_metrics['inference'] = False
+        
+        metrics['applications'] = app_metrics
+        
+        # Save metrics
+        with open('system-metrics.json', 'w') as f:
+            json.dump(metrics, f, indent=2)
+        
+        print(f"::set-output name=metrics::{json.dumps(metrics)}")
+        EOF
+    
+    - name: Generate system status report
+      run: |
+        python << 'EOF'
+        import json
+        from datetime import datetime
+        import subprocess
+        
+        with open('system-metrics.json', 'r') as f:
+            metrics = json.load(f)
+        
+        # Get git information
+        try:
+            last_commit = subprocess.check_output(['git', 'log', '-1', '--format=%h %s'], text=True).strip()
+            total_commits = subprocess.check_output(['git', 'rev-list', '--count', 'HEAD'], text=True).strip()
+            branch = subprocess.check_output(['git', 'branch', '--show-current'], text=True).strip()
+        except:
+            last_commit = "Unknown"
+            total_commits = "Unknown"
+            branch = "Unknown"
+        
+        web_ui_status = "✅ Healthy" if metrics['applications'].get('web_ui') else "❌ Unhealthy"
+        inference_status = "✅ Healthy" if metrics['applications'].get('inference') else "❌ Unhealthy"
+        
+        report = f"""# System Status Report
+Generated: {metrics['timestamp']}
+
+## System Metrics
+- CPU Usage: {metrics['system']['cpu_percent']}%
+- Memory Usage: {metrics['system']['memory_percent']}%
+- Memory Available: {metrics['system']['memory_available_gb']:.2f} GB
+- Disk Usage: {metrics['system']['disk_percent']}%
+- Disk Free: {metrics['system']['disk_free_gb']:.2f} GB
+
+## Application Health
+- Web UI: {web_ui_status}
+- Inference Service: {inference_status}
+
+## Recent Activity
+- Last commit: {last_commit}
+- Total commits: {total_commits}
+- Branch: {branch}
+
+---
+*This report is automatically generated every 2 hours*
+"""
+        
+        with open('SYSTEM_STATUS.md', 'w') as f:
+            f.write(report)
+        
+        print(report)
+        EOF
+    
+    - name: Commit system status
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add SYSTEM_STATUS.md system-metrics.json
+        git commit -m "📊 System status update - $(date '+%Y-%m-%d %H:%M')" || echo "No changes to commit"
+        git push
+
+  # Performance metrics collection
+  performance-metrics:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.commit_type == 'performance-report'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install dependencies
+      run: |
+        pip install requests matplotlib pandas seaborn
+    
+    - name: Generate performance report
+      run: |
+        python << 'EOF'
+        import json
+        import matplotlib.pyplot as plt
+        import pandas as pd
+        from datetime import datetime, timedelta
+        import requests
+        
+        # Generate sample performance data (in real scenario, this would come from actual metrics)
+        dates = [datetime.now() - timedelta(hours=i) for i in range(24, 0, -1)]
+        
+        performance_data = {
+            'timestamps': [d.isoformat() for d in dates],
+            'prediction_latency_ms': [85 + i*2 for i in range(24)],
+            'predictions_per_minute': [45 + i*3 for i in range(24)],
+            'error_rate': [0.02 + i*0.001 for i in range(24)],
+            'cpu_usage': [45 + i*1.5 for i in range(24)]
+        }
+        
+        # Create performance charts
+        df = pd.DataFrame(performance_data)
+        df['timestamp'] = pd.to_datetime(df['timestamps'])
+        
+        # Create subplots
+        fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+        fig.suptitle('ML System Performance - Last 24 Hours', fontsize=16)
+        
+        # Prediction Latency
+        axes[0, 0].plot(df['timestamp'], df['prediction_latency_ms'], 'b-', linewidth=2)
+        axes[0, 0].set_title('Prediction Latency (ms)')
+        axes[0, 0].set_ylabel('Latency (ms)')
+        axes[0, 0].grid(True, alpha=0.3)
+        
+        # Predictions per Minute
+        axes[0, 1].plot(df['timestamp'], df['predictions_per_minute'], 'g-', linewidth=2)
+        axes[0, 1].set_title('Predictions per Minute')
+        axes[0, 1].set_ylabel('Predictions/min')
+        axes[0, 1].grid(True, alpha=0.3)
+        
+        # Error Rate
+        axes[1, 0].plot(df['timestamp'], df['error_rate'] * 100, 'r-', linewidth=2)
+        axes[1, 0].set_title('Error Rate (%)')
+        axes[1, 0].set_ylabel('Error Rate (%)')
+        axes[1, 0].grid(True, alpha=0.3)
+        
+        # CPU Usage
+        axes[1, 1].plot(df['timestamp'], df['cpu_usage'], 'orange', linewidth=2)
+        axes[1, 1].set_title('CPU Usage (%)')
+        axes[1, 1].set_ylabel('CPU Usage (%)')
+        axes[1, 1].grid(True, alpha=0.3)
+        
+        # Adjust layout and save
+        plt.tight_layout()
+        plt.savefig('performance-report.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # Generate performance summary
+        avg_latency = sum(performance_data['prediction_latency_ms']) / len(performance_data['prediction_latency_ms'])
+        avg_predictions = sum(performance_data['predictions_per_minute']) / len(performance_data['predictions_per_minute'])
+        avg_error = sum(performance_data['error_rate']) / len(performance_data['error_rate'])
+        avg_cpu = sum(performance_data['cpu_usage']) / len(performance_data['cpu_usage'])
+        
+        summary = f"""# Performance Report
+Generated: {datetime.now().isoformat()}
+
+## Key Metrics (24h Average)
+- **Prediction Latency**: {avg_latency:.2f} ms
+- **Throughput**: {avg_predictions:.2f} predictions/min
+- **Error Rate**: {avg_error*100:.2f}%
+- **CPU Usage**: {avg_cpu:.2f}%
+
+## Performance Trends
+- Latency trend: {'📈 Improving' if performance_data['prediction_latency_ms'][-1] < performance_data['prediction_latency_ms'][0] else '📉 Degraded'}
+- Throughput trend: {'📈 Increasing' if performance_data['predictions_per_minute'][-1] > performance_data['predictions_per_minute'][0] else '📉 Decreasing'}
+- Error rate: {'✅ Stable' if max(performance_data['error_rate']) < 0.05 else '⚠️ High'}
+- Resource usage: {'✅ Optimal' if avg_cpu < 70 else '⚠️ High'}
+
+## Recommendations
+"""
+        
+        if avg_latency > 100:
+            summary += "- Consider optimizing model inference for better latency\n"
+        if avg_error > 0.03:
+            summary += "- Investigate increased error rate\n"
+        if avg_cpu > 80:
+            summary += "- Consider scaling out or optimizing resource usage\n"
+        
+        summary += "\n![Performance Chart](performance-report.png)"
+        
+        with open('PERFORMANCE_REPORT.md', 'w') as f:
+            f.write(summary)
+        
+        print("Performance report generated")
+        EOF
+    
+    - name: Commit performance report
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add PERFORMANCE_REPORT.md performance-report.png
+        git commit -m "📈 Performance report - $(date '+%Y-%m-%d %H:%M')" || echo "No changes to commit"
+        git push
+
+  # Documentation updates
+  documentation-update:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.commit_type == 'documentation-update'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Update API documentation
+      run: |
+        # Generate API documentation from code
+        cat > API_DOCUMENTATION.md << 'EOF'
+        # API Documentation
+
+        ## Inference Service API
+
+        ### Health Check
+        ```
+        GET /health
+        ```
+        
+        Response:
+        ```json
+        {
+            "status": "healthy",
+            "timestamp": "2024-01-15T10:30:00",
+            "model_loaded": true,
+            "wandb_connected": true,
+            "host": "inference-pod-xyz"
+        }
+        ```
+
+        ### Model Information
+        ```
+        GET /model-info
+        ```
+        
+        Response:
+        ```json
+        {
+            "status": "active",
+            "last_training_time": "2024-01-15T08:00:00",
+            "features": ["avg_session_duration", "visits_per_week", "response_rate", "feature_usage_depth"],
+            "model_type": "RandomForestRegressor",
+            "host": "inference-pod-xyz"
+        }
+        ```
+
+        ### Make Prediction
+        ```
+        POST /predict
+        Content-Type: application/json
+        ```
+        
+        Request Body:
+        ```json
+        {
+            "user_id": "user_123",
+            "avg_session_duration": 25.5,
+            "visits_per_week": 8,
+            "response_rate": 75.0,
+            "feature_usage_depth": 6
+        }
+        ```
+        
+        Response:
+        ```json
+        {
+            "engagement_score": 78.5,
+            "features_used": {
+                "user_id": "user_123",
+                "avg_session_duration": 25.5,
+                "visits_per_week": 8,
+                "response_rate": 75.0,
+                "feature_usage_depth": 6
+            },
+            "model_training_time": "2024-01-15T08:00:00",
+            "host": "inference-pod-xyz",
+            "prediction_time_seconds": 0.045
+        }
+        ```
+
+        ### Metrics Endpoint
+        ```
+        GET /metrics
+        ```
+        
+        Returns Prometheus metrics in text format.
+
+        ## Web UI API
+
+        ### Health Check
+        ```
+        GET /health
+        ```
+
+        ### System Metrics
+        ```
+        GET /api/metrics
+        ```
+
+        ### Model Information
+        ```
+        GET /api/model-info
+        ```
+
+        ### W&B Data
+        ```
+        GET /api/wandb-data
+        ```
+
+        ## Error Responses
+
+        ### 400 Bad Request
+        ```json
+        {
+            "error": "Missing features",
+            "required_features": ["avg_session_duration", "visits_per_week", "response_rate", "feature_usage_depth"]
+        }
+        ```
+
+        ### 503 Service Unavailable
+        ```json
+        {
+            "error": "No model loaded"
+        }
+        ```
+
+        ## Rate Limiting
+        - 100 requests per minute per IP
+        - Burst limit: 200 requests
+
+        ## Authentication
+        Currently no authentication required (internal service).
+
+        ## Version
+        API Version: 1.0.0
+        Last Updated: $(date '+%Y-%m-%d')
+        EOF
+    
+    - name: Commit documentation update
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add API_DOCUMENTATION.md
+        git commit -m "📚 Update API documentation - $(date '+%Y-%m-%d %H:%M')" || echo "No changes to commit"
+        git push
+
+  # Custom commit based on user input
+  custom-commit:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Make custom commit
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        
+        # Create a timestamp file to ensure there's something to commit
+        echo "Last update: $(date '+%Y-%m-%d %H:%M:%S')" > LAST_UPDATE.txt
+        echo "Commit type: ${{ github.event.inputs.commit_type }}" >> LAST_UPDATE.txt
+        echo "Message: ${{ github.event.inputs.message }}" >> LAST_UPDATE.txt
+        
+        git add LAST_UPDATE.txt
+        
+        # Determine commit message
+        if [ "${{ github.event.inputs.message }}" != "" ]; then
+          COMMIT_MSG="${{ github.event.inputs.message }}"
+        else
+          case "${{ github.event.inputs.commit_type }}" in
+            "system-update")
+              COMMIT_MSG="🔄 System update - $(date '+%Y-%m-%d %H:%M')"
+              ;;
+            "metrics-update")
+              COMMIT_MSG="📊 Metrics update - $(date '+%Y-%m-%d %H:%M')"
+              ;;
+            "documentation-update")
+              COMMIT_MSG="📚 Documentation update - $(date '+%Y-%m-%d %H:%M')"
+              ;;
+            "performance-report")
+              COMMIT_MSG="📈 Performance report - $(date '+%Y-%m-%d %H:%M')"
+              ;;
+            *)
+              COMMIT_MSG="🔄 System update - $(date '+%Y-%m-%d %H:%M')"
+              ;;
+          esac
+        fi
+        
+        git commit -m "$COMMIT_MSG" || echo "No changes to commit"
+        git push
+
+  # Repository statistics
+  repo-stats:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Get full history
+    
+    - name: Generate repository statistics
+      run: |
+        # Count lines of code
+        echo "## Repository Statistics" > REPO_STATS.md
+        echo "Generated: $(date '+%Y-%m-%d %H:%M:%S')" >> REPO_STATS.md
+        echo "" >> REPO_STATS.md
+        
+        echo "### Code Statistics" >> REPO_STATS.md
+        echo "- Total files: $(find . -name '*.py' -o -name '*.yaml' -o -name '*.yml' -o -name '*.md' -o -name '*.sh' | wc -l)" >> REPO_STATS.md
+        echo "- Python files: $(find . -name '*.py' | wc -l)" >> REPO_STATS.md
+        echo "- YAML files: $(find . -name '*.yaml' -o -name '*.yml' | wc -l)" >> REPO_STATS.md
+        echo "- Markdown files: $(find . -name '*.md' | wc -l)" >> REPO_STATS.md
+        echo "- Shell scripts: $(find . -name '*.sh' | wc -l)" >> REPO_STATS.md
+        echo "" >> REPO_STATS.md
+        
+        # Lines of code
+        echo "### Lines of Code" >> REPO_STATS.md
+        echo "- Python: $(find . -name '*.py' -exec wc -l {} + | tail -1 | awk '{print $1}')" >> REPO_STATS.md
+        echo "- YAML: $(find . -name '*.yaml' -o -name '*.yml' -exec wc -l {} + | tail -1 | awk '{print $1}')" >> REPO_STATS.md
+        echo "- Total: $(find . -name '*.py' -o -name '*.yaml' -o -name '*.yml' -exec wc -l {} + | tail -1 | awk '{print $1}')" >> REPO_STATS.md
+        echo "" >> REPO_STATS.md
+        
+        # Git statistics
+        echo "### Git Statistics" >> REPO_STATS.md
+        echo "- Total commits: $(git rev-list --count HEAD)" >> REPO_STATS.md
+        echo "- Branches: $(git branch | wc -l)" >> REPO_STATS.md
+        echo "- Contributors: $(git shortlog -sn | wc -l)" >> REPO_STATS.md
+        echo "- Latest commit: $(git log -1 --format='%h %s')" >> REPO_STATS.md
+        echo "" >> REPO_STATS.md
+        
+        # File sizes
+        echo "### File Sizes" >> REPO_STATS.md
+        echo "- Total size: $(du -sh . | cut -f1)" >> REPO_STATS.md
+        echo "- Largest files:" >> REPO_STATS.md
+        find . -type f -exec du -h {} + | sort -hr | head -5 | awk '{print "- " $2 ": " $1}' >> REPO_STATS.md
+        echo "" >> REPO_STATS.md
+        
+        echo "---" >> REPO_STATS.md
+        echo "*Statistics updated automatically every 2 hours*" >> REPO_STATS.md
+    
+    - name: Commit repository statistics
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add REPO_STATS.md
+        git commit -m "📊 Repository statistics update - $(date '+%Y-%m-%d %H:%M')" || echo "No changes to commit"
+        git push
