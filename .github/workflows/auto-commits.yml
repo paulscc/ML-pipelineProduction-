@@ -1,19 +1,15 @@
 name: Auto Commits and System Updates
 
 on:
-  push:
-    branches: [ main, develop ]
-  pull_request:
-    branches: [ main ]
-  schedule:
-    # Every 2 hours
-    - cron: '0 */2 * * *'
   workflow_dispatch:
+  schedule:
+    # Only run daily at midnight (optional - can remove if not needed)
+    - cron: '0 0 * * *'
 
 jobs:
   system-health:
     runs-on: ubuntu-latest
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     
     steps:
     - name: Checkout code
@@ -48,7 +44,7 @@ jobs:
 
   repo-stats:
     runs-on: ubuntu-latest
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     
     steps:
     - name: Checkout code
@@ -85,7 +81,7 @@ jobs:
 
   documentation-update:
     runs-on: ubuntu-latest
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     
     steps:
     - name: Checkout code
